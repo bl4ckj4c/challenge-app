@@ -71,11 +71,11 @@ jobs:
           VALUES_PATH="gitops/environments/test/values.yaml"
           mkdir -p "$(dirname "$VALUES_PATH")"
           if [ ! -f "$VALUES_PATH" ]; then
-            cat <<EOF > "$VALUES_PATH"
-            image:
-              repository: ghcr.io/${{ github.repository }}
-              tag: ${{ github.sha }}
-            EOF
+            printf '%s\n' \
+              "image:" \
+              "  repository: ghcr.io/${{ github.repository }}" \
+              "  tag: ${{ github.sha }}" \
+              > "$VALUES_PATH"
           fi
           sed -i -E "s#^([[:space:]]*repository:).*#\\1 ghcr.io/${{ github.repository }}#" "$VALUES_PATH" || true
           sed -i -E "s#^([[:space:]]*tag:).*#\\1 ${{ github.sha }}#" "$VALUES_PATH" || true
