@@ -4,6 +4,9 @@ on:
   push:
     branches: ["main"]
   pull_request:
+    types: [opened, reopened, synchronize, closed]
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -15,9 +18,16 @@ jobs:
     env:
       GITOPS_REPO: ${{ vars.GITOPS_REPO }}
       APP_NAME: ${{ vars.APP_NAME }}
+      IMAGE_TAG: ${{ github.sha }}
+      VALUES_ENV: ${{ github.event_name == 'release' && 'prod' || 'test' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve image tag for release
+        if: github.event_name == 'release'
+        run: |
+          echo "IMAGE_TAG=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -32,12 +42,15 @@ jobs:
         run: npm test
 
       - name: Set up Docker Buildx
+        if: github.event_name != 'release' && (github.event_name != 'pull_request' || (github.event.action != 'closed' && github.event.pull_request.head.repo.fork == false))
         uses: docker/setup-buildx-action@v3
 
       - name: Set up QEMU
+        if: github.event_name != 'release' && (github.event_name != 'pull_request' || (github.event.action != 'closed' && github.event.pull_request.head.repo.fork == false))
         uses: docker/setup-qemu-action@v3
 
       - name: Log in to GHCR
+        if: github.event_name != 'release' && (github.event_name != 'pull_request' || (github.event.action != 'closed' && github.event.pull_request.head.repo.fork == false))
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -45,6 +58,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
+        if: github.event_name != 'release' && (github.event_name != 'pull_request' || (github.event.action != 'closed' && github.event.pull_request.head.repo.fork == false))
         id: build
         uses: docker/build-push-action@v6
         with:
@@ -52,13 +66,13 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}:${{ env.IMAGE_TAG }}
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
 
       - name: Checkout GitOps repo
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || github.event_name == 'release' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
         uses: actions/checkout@v4
         with:
           repository: ${{ env.GITOPS_REPO }}
@@ -66,33 +80,89 @@ jobs:
           path: gitops
 
       - name: Update GitOps values
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || github.event_name == 'release'
         run: |
-          VALUES_PATH="gitops/environments/test/values.yaml"
+          VALUES_PATH="gitops/environments/${{ env.VALUES_ENV }}/values.yaml"
           mkdir -p "$(dirname "$VALUES_PATH")"
           if [ ! -f "$VALUES_PATH" ]; then
             printf '%s\n' \
               "image:" \
               "  repository: ghcr.io/${{ github.repository }}" \
-              "  tag: ${{ github.sha }}" \
+              "  tag: ${{ env.IMAGE_TAG }}" \
               > "$VALUES_PATH"
           fi
           sed -i -E "s#^([[:space:]]*repository:).*#\\1 ghcr.io/${{ github.repository }}#" "$VALUES_PATH" || true
-          sed -i -E "s#^([[:space:]]*tag:).*#\\1 ${{ github.sha }}#" "$VALUES_PATH" || true
+          sed -i -E "s#^([[:space:]]*tag:).*#\\1 ${{ env.IMAGE_TAG }}#" "$VALUES_PATH" || true
           git -C gitops status --short
 
       - name: Commit and push GitOps changes
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || github.event_name == 'release'
         run: |
           cd gitops
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add environments/test/values.yaml
+          git add "environments/${{ env.VALUES_ENV }}/values.yaml"
           if git diff --cached --quiet; then
             echo "No GitOps changes to commit."
             exit 0
           fi
-          git commit -m "chore: update ${APP_NAME} image tag to ${{ github.sha }}"
+          git commit -m "chore: update ${APP_NAME} image tag to ${{ env.IMAGE_TAG }}"
+          git push
+
+      - name: Update GitOps PR values
+        if: github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.fork == false
+        run: |
+          PR_NAMESPACE="pr-${{ github.event.pull_request.number }}"
+          VALUES_PATH="gitops/environments/dev/${PR_NAMESPACE}/values.yaml"
+          mkdir -p "$(dirname "$VALUES_PATH")"
+          if [ ! -f "$VALUES_PATH" ]; then
+            printf '%s\n' \
+              "namespace: ${PR_NAMESPACE}" \
+              "image:" \
+              "  repository: ghcr.io/${{ github.repository }}" \
+              "  tag: ${{ github.event.pull_request.head.sha }}" \
+              > "$VALUES_PATH"
+          fi
+          sed -i -E "s#^([[:space:]]*namespace:).*#\\1 ${PR_NAMESPACE}#" "$VALUES_PATH" || true
+          sed -i -E "s#^([[:space:]]*repository:).*#\\1 ghcr.io/${{ github.repository }}#" "$VALUES_PATH" || true
+          sed -i -E "s#^([[:space:]]*tag:).*#\\1 ${{ github.event.pull_request.head.sha }}#" "$VALUES_PATH" || true
+          git -C gitops status --short
+
+      - name: Commit and push GitOps PR values
+        if: github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.fork == false
+        run: |
+          cd gitops
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "environments/dev/pr-${{ github.event.pull_request.number }}/values.yaml"
+          if git diff --cached --quiet; then
+            echo "No PR values changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: update ${APP_NAME} PR-${{ github.event.pull_request.number }} values"
+          git push
+
+      - name: Delete GitOps PR environment
+        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.head.repo.fork == false
+        run: |
+          PR_DIR="gitops/environments/dev/pr-${{ github.event.pull_request.number }}"
+          if [ -d "$PR_DIR" ]; then
+            rm -rf "$PR_DIR"
+          fi
+          git -C gitops status --short
+
+      - name: Commit and push GitOps PR cleanup
+        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.head.repo.fork == false
+        run: |
+          cd gitops
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A "environments/dev/pr-${{ github.event.pull_request.number }}"
+          if git diff --cached --quiet; then
+            echo "No PR environment changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: remove ${APP_NAME} PR-${{ github.event.pull_request.number }} environment"
           git push
 
   helm-publish:
