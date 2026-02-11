@@ -120,12 +120,12 @@ jobs:
               "namespace: ${PR_NAMESPACE}" \
               "image:" \
               "  repository: ghcr.io/${{ github.repository }}" \
-              "  tag: ${{ github.event.pull_request.head.sha }}" \
+              "  tag: ${{ env.IMAGE_TAG }}" \
               > "$VALUES_PATH"
           fi
           sed -i -E "s#^([[:space:]]*namespace:).*#\\1 ${PR_NAMESPACE}#" "$VALUES_PATH" || true
           sed -i -E "s#^([[:space:]]*repository:).*#\\1 ghcr.io/${{ github.repository }}#" "$VALUES_PATH" || true
-          sed -i -E "s#^([[:space:]]*tag:).*#\\1 ${{ github.event.pull_request.head.sha }}#" "$VALUES_PATH" || true
+          sed -i -E "s#^([[:space:]]*tag:).*#\\1 ${{ env.IMAGE_TAG }}#" "$VALUES_PATH" || true
           git -C gitops status --short
 
       - name: Commit and push GitOps PR values
