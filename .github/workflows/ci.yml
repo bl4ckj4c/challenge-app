@@ -143,7 +143,7 @@ jobs:
           git push
 
       - name: Delete GitOps PR environment
-        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.head.repo.fork == false
+        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.fork == false
         run: |
           PR_DIR="gitops/environments/dev/pr-${{ github.event.pull_request.number }}"
           if [ -d "$PR_DIR" ]; then
@@ -152,7 +152,7 @@ jobs:
           git -C gitops status --short
 
       - name: Commit and push GitOps PR cleanup
-        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.head.repo.fork == false
+        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.fork == false
         run: |
           cd gitops
           git config user.name "github-actions[bot]"
