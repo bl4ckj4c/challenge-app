@@ -1,5 +1,7 @@
 name: challenge-app
 namespace: challenge-app
+deploymentName: challenge-app
+serviceName: challenge-app
 
 replicaCount: 1
 
@@ -13,3 +15,5 @@ service:
   type: NodePort
   port: 80
   targetPort: 80
+  # Leave unset to let Kubernetes auto-assign a NodePort.
+  # nodePort: 30080
